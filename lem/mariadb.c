@@ -1,20 +1,20 @@
 /*
- * This file is part of lem-postgres.
- * Copyright 2011 Emil Renner Berthing
- * Copyright 2013 Asbjørn Sloth Tønnesen
+ * This file is part of lem-mariadb.
+ * Copyright 2015 Kristian Nielsen
+ * Copyright 2015 Emil Renner Berthing
  *
- * lem-postgres is free software: you can redistribute it and/or
+ * lem-mariadb is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 3 of
  * the License, or (at your option) any later version.
  *
- * lem-postgres is distributed in the hope that it will be useful,
+ * lem-mariadb is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with lem-postgres. If not, see <http://www.gnu.org/licenses/>.
+ * along with lem-mariadb. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <stdlib.h>
@@ -101,14 +101,14 @@ db_close(lua_State *T)
 static int
 mysql_status(int events)
 {
-  int status= 0;
-  if (events & EV_READ)
-    status|= MYSQL_WAIT_READ;
-  if (events & EV_WRITE)
-    status|= MYSQL_WAIT_WRITE;
-  if (events & EV_TIMEOUT)
-    status|= MYSQL_WAIT_TIMEOUT;
-  return status;
+	int status= 0;
+	if (events & EV_READ)
+		status|= MYSQL_WAIT_READ;
+	if (events & EV_WRITE)
+		status|= MYSQL_WAIT_WRITE;
+	if (events & EV_TIMEOUT)
+		status|= MYSQL_WAIT_TIMEOUT;
+	return status;
 }
 
 static void
@@ -200,10 +200,10 @@ mariadb_connect(lua_State *T)
 	return 1;
 }
 
+#ifdef ToDo
 static void
 push_tuples(lua_State *T, struct PGresult *res)
 {
-#ifdef ToDo
 	int rows = PQntuples(res);
 	int columns = PQnfields(res);
 	int i;
@@ -231,8 +231,8 @@ push_tuples(lua_State *T, struct PGresult *res)
 		lua_rawseti(T, -2, i+1);
 	}
 	lua_rawseti(T, -2, 0);
-#endif
 }
+#endif
 
 #ifdef ToDo
 static void
@@ -266,10 +266,10 @@ db_error_cb(EV_P_ struct ev_io *w, int revents)
 }
 #endif
 
+#ifdef ToDo
 static void
 db_exec_cb(EV_P_ struct ev_io *w, int revents)
 {
-#ifdef ToDo
 	struct db *d = (struct db *)w;
 	lua_State *T = d->w.data;
 	PGresult *res;
@@ -368,8 +368,8 @@ error:
 
 		PQclear(res);
 	}
-#endif
 }
+#endif
 
 void
 prepare_params(lua_State *T, int n, const char **values, int *lengths)

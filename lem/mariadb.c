@@ -200,10 +200,10 @@ mariadb_connect(lua_State *T)
 	return 1;
 }
 
+#ifdef ToDo
 static void
 push_tuples(lua_State *T, struct PGresult *res)
 {
-#ifdef ToDo
 	int rows = PQntuples(res);
 	int columns = PQnfields(res);
 	int i;
@@ -231,8 +231,8 @@ push_tuples(lua_State *T, struct PGresult *res)
 		lua_rawseti(T, -2, i+1);
 	}
 	lua_rawseti(T, -2, 0);
-#endif
 }
+#endif
 
 #ifdef ToDo
 static void
@@ -266,10 +266,10 @@ db_error_cb(EV_P_ struct ev_io *w, int revents)
 }
 #endif
 
+#ifdef ToDo
 static void
 db_exec_cb(EV_P_ struct ev_io *w, int revents)
 {
-#ifdef ToDo
 	struct db *d = (struct db *)w;
 	lua_State *T = d->w.data;
 	PGresult *res;
@@ -368,8 +368,8 @@ error:
 
 		PQclear(res);
 	}
-#endif
 }
+#endif
 
 void
 prepare_params(lua_State *T, int n, const char **values, int *lengths)

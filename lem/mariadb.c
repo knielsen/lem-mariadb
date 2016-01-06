@@ -101,14 +101,14 @@ db_close(lua_State *T)
 static int
 mysql_status(int events)
 {
-  int status= 0;
-  if (events & EV_READ)
-    status|= MYSQL_WAIT_READ;
-  if (events & EV_WRITE)
-    status|= MYSQL_WAIT_WRITE;
-  if (events & EV_TIMEOUT)
-    status|= MYSQL_WAIT_TIMEOUT;
-  return status;
+	int status= 0;
+	if (events & EV_READ)
+		status|= MYSQL_WAIT_READ;
+	if (events & EV_WRITE)
+		status|= MYSQL_WAIT_WRITE;
+	if (events & EV_TIMEOUT)
+		status|= MYSQL_WAIT_TIMEOUT;
+	return status;
 }
 
 static void

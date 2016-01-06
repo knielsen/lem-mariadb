@@ -1,20 +1,20 @@
 /*
- * This file is part of lem-postgres.
- * Copyright 2011 Emil Renner Berthing
- * Copyright 2013 Asbjørn Sloth Tønnesen
+ * This file is part of lem-mariadb.
+ * Copyright 2015 Kristian Nielsen
+ * Copyright 2015 Emil Renner Berthing
  *
- * lem-postgres is free software: you can redistribute it and/or
+ * lem-mariadb is free software: you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation, either version 3 of
  * the License, or (at your option) any later version.
  *
- * lem-postgres is distributed in the hope that it will be useful,
+ * lem-mariadb is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with lem-postgres. If not, see <http://www.gnu.org/licenses/>.
+ * along with lem-mariadb. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <stdlib.h>

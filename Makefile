@@ -1,24 +1,23 @@
-CC         = gcc -std=gnu99
-CFLAGS    ?= -O2 -pipe -Wall -Wextra -Wno-strict-aliasing -fno-strict-aliasing
-PKG_CONFIG = pkg-config
+CC              = gcc -std=gnu99
+CFLAGS         ?= -O2 -pipe -Wall -Wextra -Wno-strict-aliasing -fno-strict-aliasing
+PKG_CONFIG      = pkg-config
 MARIADB_CONFIG  = mysql_config
-STRIP      = strip
-INSTALL    = install
-UNAME      = uname
+STRIP           = strip
+INSTALL         = install
+UNAME           = uname
 
-OS         = $(shell $(UNAME))
-CFLAGS    += $(shell $(PKG_CONFIG) --cflags lem)
-CFLAGS    += -I$(shell $(MARIADB_CONFIG) --include)
-LDFLAGS   += -L$(shell $(MARIADB_CONFIG) --libs)
-LIBS       = -lpq
-lmoddir    = $(shell $(PKG_CONFIG) --variable=INSTALL_LMOD lem)
-cmoddir    = $(shell $(PKG_CONFIG) --variable=INSTALL_CMOD lem)
+OS              = $(shell $(UNAME))
+CFLAGS         += $(shell $(PKG_CONFIG) --cflags lem)
+CFLAGS         += $(shell $(MARIADB_CONFIG) --include)
+LIBS            = $(shell $(MARIADB_CONFIG) --libs)
+lmoddir         = $(shell $(PKG_CONFIG) --variable=INSTALL_LMOD lem)
+cmoddir         = $(shell $(PKG_CONFIG) --variable=INSTALL_CMOD lem)
 
 ifeq ($(OS),Darwin)
-SHARED     = -dynamiclib -Wl,-undefined,dynamic_lookup
-STRIP     += -x
+SHARED          = -dynamiclib -Wl,-undefined,dynamic_lookup
+STRIP          += -x
 else
-SHARED     = -shared
+SHARED          = -shared
 endif
 
 llibs = lem/mariadb/queued.lua

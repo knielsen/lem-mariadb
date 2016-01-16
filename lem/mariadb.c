@@ -18,6 +18,7 @@
  */
 
 #include <stdlib.h>
+#include <string.h>
 #include <assert.h>
 #include <lem.h>
 #include <mysql/mysql.h>
@@ -26,6 +27,7 @@ struct db {
 	struct ev_io w;
 	MYSQL conn_obj;
 	MYSQL *conn;
+	int step;
 };
 
 static int
@@ -48,16 +50,11 @@ static int
 err_connection(lua_State *T, MYSQL *conn)
 {
 	const char *msg = mysql_error(conn);
-	const char *p;
-
-	for (p = msg; *p != '\n' && *p != '\0'; p++);
 
 	lua_pushnil(T);
-	if (p > msg)
-		lua_pushlstring(T, msg, p - msg);
-	else
-		lua_pushliteral(T, "unknown error");
-	return 2;
+        lua_pushlstring(T, msg, strlen(msg));
+        lua_pushinteger(T, mysql_errno(conn));
+	return 3;
 }
 
 static int
@@ -114,16 +111,17 @@ mysql_status(int events)
 static void
 db_handle_polling(struct db *d, int status)
 {
-	/* ToDo: Do we need separate watchers for read and write (and timeout) ? */
+	int flags = 0;
 	if (status & MYSQL_WAIT_READ) {
 		lem_debug("MARIA_POLLING_READING");
-		ev_io_set(&d->w, mysql_get_socket(d->conn), EV_READ);
+		flags |= EV_READ;
 	}
 	if (status & MYSQL_WAIT_WRITE) {
 		lem_debug("PGRES_POLLING_WRITING");
-		ev_io_set(&d->w, mysql_get_socket(d->conn), EV_WRITE);
+		flags |= EV_WRITE;
 	}
 	/* ToDo: handle MYSQL_WAIT_TIMEOUT */
+	ev_io_set(&d->w, mysql_get_socket(d->conn), flags);
 }
 
 static void
@@ -172,6 +170,7 @@ mariadb_connect(lua_State *T)
 	lua_settop(T, 0);
 	d = lua_newuserdata(T, sizeof(struct db));
 	conn = d->conn = &d->conn_obj;
+	d->step = -1;
 	lua_pushvalue(T, lua_upvalueindex(1));
 	lua_setmetatable(T, -2);
 
@@ -190,8 +189,7 @@ mariadb_connect(lua_State *T)
 	if (!conn_res) {
 		lem_debug("MARIA_POLLING_FAILED");
 		d->conn = NULL;
-		err_connection(T, conn);
-		return 2;
+		return err_connection(T, conn);
 	}
 
 	lem_debug("MARIA_POLLING_OK");
@@ -200,39 +198,44 @@ mariadb_connect(lua_State *T)
 	return 1;
 }
 
-#ifdef ToDo
-static void
-push_tuples(lua_State *T, struct PGresult *res)
+static int
+push_tuples(lua_State *T, MYSQL_RES *res)
 {
-	int rows = PQntuples(res);
-	int columns = PQnfields(res);
-	int i;
+	unsigned fields, i;
+	int idx;
 
-	lua_createtable(T, rows, 0);
-	for (i = 0; i < rows; i++) {
-		int j;
+	lua_settop(T, 0);
+	if (!res) {
+		/* Empty result set (like UPDATE/DELETE/INSERT, or DDL). */
+		lua_createtable(T, 0, 0);
+		return 1;
+	}
 
-		lua_createtable(T, columns, 0);
-		for (j = 0; j < columns; j++) {
-			if (PQgetisnull(res, i, j))
-				lua_pushnil(T);
+	lua_createtable(T, mysql_num_rows(res), 0);
+	fields = mysql_num_fields(res);
+	idx = 1;
+	for (;;) {
+		MYSQL_ROW row;
+		unsigned long *lengths;
+
+		row = mysql_fetch_row(res);
+		if (!row)
+			break;
+		lengths = mysql_fetch_lengths(res);
+		lua_createtable(T, fields, 0);
+		for (i = 0; i < fields; ++i) {
+			if (row[i])
+				lua_pushlstring(T, row[i], lengths[i]);
 			else
-				lua_pushlstring(T, PQgetvalue(res, i, j),
-				                   PQgetlength(res, i, j));
-			lua_rawseti(T, -2, j+1);
+				lua_pushnil(T);
+			lua_rawseti(T, -2, i+1);
 		}
-		lua_rawseti(T, -2, i+1);
+		lua_rawseti(T, -2, idx);
+		++idx;
 	}
-
-	/* insert column names as "row 0" */
-	lua_createtable(T, columns, 0);
-	for (i = 0; i < columns; i++) {
-		lua_pushstring(T, PQfname(res, i));
-		lua_rawseti(T, -2, i+1);
-	}
-	lua_rawseti(T, -2, 0);
+	mysql_free_result(res);
+	return 1;
 }
-#endif
 
 #ifdef ToDo
 static void
@@ -474,47 +477,86 @@ db_prepare(lua_State *T)
 	return lua_yield(T, 1);
 }
 
+static void
+db_run_cb(EV_P_ struct ev_io *w, int revents)
+{
+	struct db *d = (struct db *)w;
+	lua_State *T = d->w.data;
+	int status;
+	int err = 0;
+	MYSQL_RES *res = NULL;
+	MYSQL *conn = d->conn;
+        int step = d->step;
+
+	ev_io_stop(EV_A_ &d->w);
+	if (step == 0)
+		status = mysql_real_query_cont(&err, conn, mysql_status(revents));
+	else
+		status = mysql_store_result_cont(&res, conn, mysql_status(revents));
+	if (step == 0 && !status && !err) {
+		step = d->step = 1;
+		status = mysql_store_result_start(&res, conn);
+	}
+	if (status) {
+		db_handle_polling(d, status);
+		ev_io_start(EV_A_ &d->w);
+		return;
+	}
+
+	d->w.data = NULL;
+	d->step = -1;
+	if ((step == 0 && err) || (step == 1 && !res && mysql_errno(conn) != 0)) {
+		lua_settop(T, 0);
+		lem_queue(T, err_connection(T, conn));
+		return;
+	}
+
+	lem_queue(T, push_tuples(T, res));
+}
+
 static int
 db_run(lua_State *T)
 {
-#ifdef ToDo
 	struct db *d;
-	const char *name;
-	int n;
+	const char *query;
+	int err;
+	MYSQL *conn;
+	MYSQL_RES *res;
+	int status;
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
-	name = luaL_checkstring(T, 2);
+	query = luaL_checkstring(T, 2);
 
 	d = lua_touserdata(T, 1);
-	if (d->conn == NULL)
+	conn = d->conn;
+	if (conn == NULL)
 		return err_closed(T);
 	if (d->w.data != NULL)
 		return err_busy(T);
 
-	n = lua_gettop(T) - 2;
-	if (n > 0) {
-		const char **values = lem_xmalloc(n * sizeof(char *));
-		int *lengths = lem_xmalloc(n * sizeof(int));
-
-		prepare_params(T, n, values, lengths);
-
-		n = PQsendQueryPrepared(d->conn, name, n,
-				values, lengths, NULL, 0);
-		free(values);
-		free(lengths);
+	status = mysql_real_query_start(&err, conn, query, strlen(query));
+	if (!status) {
+		if (err) {
+			lua_settop(T, 0);
+			return err_connection(T, conn);
+		}
+		status = mysql_store_result_start(&res, conn);
+		if (!status) {
+			if (!res && mysql_errno(conn) != 0) {
+				lua_settop(T, 0);
+				return err_connection(T, conn);
+			}
+			return push_tuples(T, res);
+		} else
+			d->step = 1;
 	} else
-		n = PQsendQueryPrepared(d->conn, name, 0, NULL, NULL, NULL, 0);
-
-	if (n != 1)
-		return err_connection(T, d->conn);
+		d->step = 0;
 
 	d->w.data = T;
-	d->w.cb = db_exec_cb;
-	ev_io_set(&d->w, PQsocket(d->conn), EV_READ);
+	ev_set_cb(&d->w, db_run_cb);
+	db_handle_polling(d, status);
 	ev_io_start(LEM_ &d->w);
-
 	lua_settop(T, 1);
-#endif
 	return lua_yield(T, 1);
 }
 

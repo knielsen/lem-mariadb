@@ -297,14 +297,17 @@ wrap_stmt(lua_State *T, struct stmt *st)
 	MYSQL_STMT *my_stmt = st->my_stmt;
 
 	res = mysql_stmt_result_metadata(my_stmt);
-	if (!res) {
-		lua_settop(T, 1);
-		return err_connection(T, st->d->conn);
-	}
 	st->result_metadata = res;
+	if (!res) {
+		if (mysql_errno(st->d->conn) != 0) {
+			lua_settop(T, 0);
+			return err_connection(T, st->d->conn);
+		}
+		st->num_fields = 0;
+	} else
+		st->num_fields = mysql_num_fields(res);
 	st->param_count = mysql_stmt_param_count(my_stmt);
 	st->param_bind = lem_xmalloc(st->param_count * sizeof(MYSQL_BIND));
-	st->num_fields = mysql_num_fields(res);
 	st->result_bind = lem_xmalloc(st->num_fields * sizeof(MYSQL_BIND));
 	st->bind_data = lem_xmalloc(st->num_fields * sizeof(struct bind_data));
 	st->row_idx = -1;
@@ -540,7 +543,7 @@ push_stmt_tuple(lua_State *T, struct db *d, struct stmt *st, int err)
 	MYSQL_STMT *my_stmt = st->my_stmt;
 
 	/* Top of the stack is the result table. We need to add one row to it. */
-	num_fields = mysql_num_fields(st->result_metadata);
+	num_fields = st->num_fields;
 	lua_createtable(T, num_fields, 0);
 	for (i = 0; i < num_fields; ++i) {
 		struct bind_data *bd = &st->bind_data[i];

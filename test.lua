@@ -63,7 +63,9 @@ end
 
 local mariadb = require 'lem.mariadb'
 
-local db = assert(mariadb.connect('localhost', 'user', 'pass', 'test', 0, '/var/run/mysqld/mysqld.sock'))
+local db = assert(mariadb.connect(nil, 'user', 'pass', 'test', nil, '/var/run/mysqld/mysqld.sock'))
+local db = assert(mariadb.connect('localhost', 'user', 'pass', 'test', nil, '/var/run/mysqld/mysqld.sock'))
+local db = assert(mariadb.connect('127.0.0.1', 'user', 'pass', 'test', 3306))
 
 assert(db:exec(
 'DROP TABLE IF EXISTS mytable'))

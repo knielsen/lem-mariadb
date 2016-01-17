@@ -175,17 +175,25 @@ mariadb_connect_cb(EV_P_ struct ev_io *w, int revents)
 static int
 mariadb_connect(lua_State *T)
 {
-	const char *o_host = luaL_checkstring(T, 1);
-	const char *o_user = luaL_checkstring(T, 2);
-	const char *o_passwd = luaL_checkstring(T, 3);
-	const char *o_db = luaL_checkstring(T, 4);
-	lua_Integer o_port = luaL_checkinteger(T, 5);
-	const char *o_socket = luaL_checkstring(T, 6);
+	const char *o_host;
+	const char *o_user;
+	const char *o_passwd;
+	const char *o_db;
+	lua_Integer o_port;
+	const char *o_socket;
 	MYSQL *conn, *conn_res;
 	struct db *d;
 	int status;
+	int num_args;
 
-	lua_settop(T, 0);
+	num_args = lua_gettop(T);
+	o_host = num_args < 1 || lua_isnil(T, 1) ? NULL : luaL_checkstring(T, 1);
+	o_user = num_args < 2 || lua_isnil(T, 2) ? NULL : luaL_checkstring(T, 2);
+	o_passwd = num_args < 3 || lua_isnil(T, 3) ? NULL : luaL_checkstring(T, 3);
+	o_db = num_args < 4 || lua_isnil(T, 4) ? NULL : luaL_checkstring(T, 4);
+	o_port = num_args < 5 || lua_isnil(T, 5) ? 0 : luaL_checkinteger(T, 5);
+	o_socket = num_args < 6 || lua_isnil(T, 6) ? NULL : luaL_checkstring(T, 6);
+
 	d = lua_newuserdata(T, sizeof(struct db));
 	conn = d->conn = &d->conn_obj;
 	d->step = -1;
@@ -201,7 +209,7 @@ mariadb_connect(lua_State *T)
 		db_handle_polling(d, status);
 		d->w.data = T;
 		ev_io_start(EV_A_ &d->w);
-		return lua_yield(T, 1);
+		return lua_yield(T, lua_gettop(T));
 	}
 
 	if (!conn_res) {

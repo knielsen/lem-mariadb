@@ -30,6 +30,24 @@ struct db {
 	int step;
 };
 
+struct bind_data {
+	unsigned long length;
+	my_bool is_null;
+	my_bool error;
+	char buffer[4 /* ToDo: 4096 */];
+};
+
+struct stmt {
+	struct db *d;
+	MYSQL_STMT *my_stmt;
+	MYSQL_BIND *param_bind, *result_bind;
+	MYSQL_RES *result_metadata;
+	struct bind_data *bind_data;
+	int param_count;
+	int num_fields;
+	int row_idx;
+};
+
 static int
 err_closed(lua_State *T)
 {
@@ -189,6 +207,7 @@ mariadb_connect(lua_State *T)
 	if (!conn_res) {
 		lem_debug("MARIA_POLLING_FAILED");
 		d->conn = NULL;
+		lua_settop(T, 0);
 		return err_connection(T, conn);
 	}
 
@@ -374,37 +393,39 @@ error:
 }
 #endif
 
-void
-prepare_params(lua_State *T, int n, const char **values, int *lengths)
+int
+prepare_params(lua_State *T, struct stmt *st, int n)
 {
 	int i;
+	int param_count;
+	MYSQL_STMT *my_stmt = st->my_stmt;
+	MYSQL_BIND *bind = st->param_bind;
 
-	for (i = 0; i < n; i++) {
+	param_count = st->param_count;
+	memset(bind, 0, param_count * sizeof(*bind));
+
+	for (i = 0; i < param_count; i++) {
 		size_t len;
-		const char *val;
 
-		if (lua_isnil(T, i+3)) {
-			val = NULL;
-			/* len is ignored by libpq */
+		if (i >= n || lua_isnil(T, i+3)) {
+			bind[i].buffer_type = MYSQL_TYPE_NULL;
 		} else {
-			val = lua_tolstring(T, i+3, &len);
-			if (val == NULL) {
-				free(values);
-				free(lengths);
-				luaL_argerror(T, i+3, "expected nil or string");
-				/* unreachable */
-			}
+			bind[i].buffer_type = MYSQL_TYPE_STRING;
+			bind[i].is_null = NULL;
+			bind[i].buffer = (char *)lua_tolstring(T, i+3, &len);
+			bind[i].buffer_length = len;
+			bind[i].length = &bind[i].buffer_length;
 		}
-
-		values[i] = val;
-		lengths[i] = len;
 	}
+	if (mysql_stmt_bind_param(my_stmt, bind))
+		return 1;
+	return 0;
 }
 
+#ifdef ToDo
 static int
 db_exec(lua_State *T)
 {
-#ifdef ToDo
 	struct db *d;
 	const char *command;
 	int n;
@@ -443,42 +464,113 @@ db_exec(lua_State *T)
 	ev_io_start(LEM_ &d->w);
 
 	lua_settop(T, 1);
-#endif
 	return lua_yield(T, 1);
+}
+#endif
+
+static int
+wrap_stmt(lua_State *T, struct stmt *st)
+{
+	MYSQL_RES *res;
+	MYSQL_STMT *my_stmt = st->my_stmt;
+
+	res = mysql_stmt_result_metadata(my_stmt);
+	if (!res) {
+		lua_settop(T, 1);
+		return err_connection(T, st->d->conn);
+	}
+	st->result_metadata = res;
+	st->param_count = mysql_stmt_param_count(my_stmt);
+	st->param_bind = lem_xmalloc(st->param_count * sizeof(MYSQL_BIND));
+	st->num_fields = mysql_num_fields(res);
+	st->result_bind = lem_xmalloc(st->num_fields * sizeof(MYSQL_BIND));
+	st->bind_data = lem_xmalloc(st->num_fields * sizeof(struct bind_data));
+	st->row_idx = -1;
+	return 1;
+}
+
+static void
+db_prepare_cb(EV_P_ struct ev_io *w, int revents)
+{
+	struct db *d = (struct db *)w;
+	struct stmt *st;
+	lua_State *T = d->w.data;
+	int status;
+	int err = 0;
+	MYSQL *conn = d->conn;
+	MYSQL_STMT *my_stmt;
+
+	st = lua_touserdata(T, 1);
+	my_stmt = st->my_stmt;
+
+	ev_io_stop(EV_A_ &d->w);
+	status = mysql_stmt_prepare_cont(&err, my_stmt, mysql_status(revents));
+	if (status) {
+		db_handle_polling(d, status);
+		ev_io_start(EV_A_ &d->w);
+		return;
+	}
+
+	d->w.data = NULL;
+	if (err) {
+		lua_settop(T, 0);
+		lem_queue(T, err_connection(T, conn));
+		return;
+	}
+
+	lem_queue(T, wrap_stmt(T, st));
 }
 
 static int
 db_prepare(lua_State *T)
 {
-#ifdef ToDo
 	struct db *d;
-	const char *name;
 	const char *query;
+	int err;
+	MYSQL *conn;
+	int status;
+	MYSQL_STMT *my_stmt;
+	struct stmt *st;
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
-	name = luaL_checkstring(T, 2);
-	query = luaL_checkstring(T, 3);
-
+	query = luaL_checkstring(T, 2);
 	d = lua_touserdata(T, 1);
-	if (d->conn == NULL)
+	lua_settop(T, 0); /* ToDo: don't we nuke the value of `query` here? */
+	conn = d->conn;
+	if (conn == NULL)
 		return err_closed(T);
 	if (d->w.data != NULL)
 		return err_busy(T);
-	if (PQsendPrepare(d->conn, name, query, 0, NULL) != 1)
-		return err_connection(T, d->conn);
 
+	my_stmt = mysql_stmt_init(conn);
+	if (!my_stmt)
+		return err_connection(T, conn);
+
+	/* Put the prepared statement object on top of the stack */
+	st = lua_newuserdata(T, sizeof(struct stmt));
+	st->d = d;
+	st->my_stmt = my_stmt;
+	st->param_bind = st->result_bind = NULL;
+	st->bind_data = NULL;
+	st->param_count = -1;
+	st->num_fields = -1;
+	st->result_metadata = NULL;
+	/* ToDo: refcounting to avoid dangling st->conn reference */
+	lua_pushvalue(T, lua_upvalueindex(1));
+	lua_setmetatable(T, -2);
+
+	status = mysql_stmt_prepare_start(&err, my_stmt, query, strlen(query));
+	if (!status)
+		return wrap_stmt(T, st);
 	d->w.data = T;
-	d->w.cb = db_exec_cb;
-	ev_io_set(&d->w, PQsocket(d->conn), EV_READ);
+	ev_set_cb(&d->w, db_prepare_cb);
+	db_handle_polling(d, status);
 	ev_io_start(LEM_ &d->w);
-
-	lua_settop(T, 1);
-#endif
 	return lua_yield(T, 1);
 }
 
 static void
-db_run_cb(EV_P_ struct ev_io *w, int revents)
+db_exec_cb(EV_P_ struct ev_io *w, int revents)
 {
 	struct db *d = (struct db *)w;
 	lua_State *T = d->w.data;
@@ -515,7 +607,7 @@ db_run_cb(EV_P_ struct ev_io *w, int revents)
 }
 
 static int
-db_run(lua_State *T)
+db_exec(lua_State *T)
 {
 	struct db *d;
 	const char *query;
@@ -553,20 +645,252 @@ db_run(lua_State *T)
 		d->step = 0;
 
 	d->w.data = T;
-	ev_set_cb(&d->w, db_run_cb);
+	ev_set_cb(&d->w, db_exec_cb);
 	db_handle_polling(d, status);
 	ev_io_start(LEM_ &d->w);
 	lua_settop(T, 1);
 	return lua_yield(T, 1);
 }
 
+static int
+stmt_gc(lua_State *T)
+{
+	/* ToDo */
+	return 0;
+}
+
+static int
+stmt_close(lua_State *T)
+{
+	struct stmt *st;
+
+	/* ToDo */
+	if (st->result_metadata)
+		mysql_free_result(st->result_metadata);
+	if (st->my_stmt)
+		mysql_stmt_close(st->my_stmt);
+	free(st->param_bind);
+	free(st->result_bind);
+	free(st->bind_data);
+	return 0;
+}
+
+static int
+bind_params(lua_State *T, struct db *d, struct stmt *st)
+{
+	MYSQL_RES *res;
+	unsigned num_fields;
+	unsigned i;
+	struct bind_data *bind_data;
+	MYSQL_BIND *binds;
+
+	res = st->result_metadata;
+	num_fields = st->num_fields;
+	if (num_fields == 0)
+		return 1;			/* No result set */
+
+	binds = st->result_bind;
+	bind_data = st->bind_data;
+	memset(binds, 0, num_fields * sizeof(MYSQL_BIND));
+	memset(bind_data, 0, num_fields * sizeof(struct bind_data));
+	for (i = 0; i < num_fields; ++i) {
+		MYSQL_FIELD *field = mysql_fetch_field_direct(res, i);
+		MYSQL_BIND *b = &binds[i];
+
+		if (!field)
+			return err_connection(T, d->conn);
+		/*
+		  ToDo: We could maybe look at the field type, and fetch an
+		  integer or number of numeric types. Though it can be a bit
+		  tricky to ensure that the number will not over/underflow
+		  (32/64 bit platform, signed/unsigned, DECIMAL, ...).
+		*/
+		b[i].buffer_type = MYSQL_TYPE_STRING;
+		b[i].buffer = bind_data[i].buffer;
+		b[i].buffer_length = sizeof(bind_data[i].buffer);
+		b[i].is_null = &bind_data[i].is_null;
+		b[i].length = &bind_data[i].length;
+		b[i].error = &bind_data[i].error;
+	}
+	if (mysql_stmt_bind_result(st->my_stmt, binds))
+		return err_connection(T, d->conn);
+	return 0;
+}
+
+static int
+push_stmt_tuple(lua_State *T, struct db *d, struct stmt *st, int err)
+{
+	unsigned num_fields;
+	unsigned i;
+	MYSQL_STMT *my_stmt = st->my_stmt;
+
+	/* Top of the stack is the result table. We need to add one row to it. */
+	num_fields = mysql_num_fields(st->result_metadata);
+	lua_createtable(T, num_fields, 0);
+	for (i = 0; i < num_fields; ++i) {
+		struct bind_data *bd = &st->bind_data[i];
+		char *p = 0;
+
+		/*
+		  If data did not fit in our buffer, we need to allocate a
+		  larger buffer for it.
+		*/
+		if (err == MYSQL_DATA_TRUNCATED && bd->error) {
+			MYSQL_BIND extra_bind;
+			memset(&extra_bind, 0, sizeof(extra_bind));
+			extra_bind.buffer_type = MYSQL_TYPE_STRING;
+			extra_bind.buffer = p = lem_xmalloc(bd->length);
+			extra_bind.buffer_length = bd->length;
+			extra_bind.is_null = &bd->is_null;
+			extra_bind.length = &bd->length;
+			extra_bind.error = &bd->error;
+			if (mysql_stmt_fetch_column(my_stmt, &extra_bind, i, 0))
+				return err_connection(T, d->conn);
+		}
+		if (bd->is_null)
+			lua_pushnil(T);
+		else
+			lua_pushlstring(T, (p ? p : bd->buffer), bd->length);
+		if (p)
+			free(p);
+		lua_rawseti(T, -2, i+1);
+	}
+	lua_rawseti(T, -2, ++st->row_idx);
+	return 0;
+}
+
+/*
+  Perform the next step in stmt:exec().
+  This can be:
+   - mysql_stmt_exec_cont(), if we are still executing the statement
+   - mysql_stmt_fetch_start(), to start fetching the next row
+   - mysql_stmt_fetch_cont(), to continue row fetching
+   - Ending, when all rows have been fetch.
+
+  Returns -1 if there is still more to be done; else the number of return
+  values.
+*/
+static int
+stmt_run_next_step(int status, int err, lua_State *T, struct db *d, struct stmt *st)
+{
+	MYSQL_STMT *my_stmt = st->my_stmt;
+	int step = d->step;
+	int num_return_values;
+
+	for (;;) {
+		if (status) {
+			db_handle_polling(d, status);
+			ev_io_start(LEM_ &d->w);
+			return -1;
+		}
+		if (step == 0) {
+			if (err) {
+				lua_settop(T, 0);
+				return err_connection(T, d->conn);
+			} else {
+				/* Allocate the result table */
+				lua_newtable(T);
+				num_return_values = bind_params(T, d, st);
+				if (num_return_values >= 0)
+					return num_return_values;
+				status = mysql_stmt_fetch_start(&err, my_stmt);
+				step = d->step = 1;
+				continue;
+			}
+		}
+		/* step == 1 */
+		if (!err || err == MYSQL_DATA_TRUNCATED) {
+			num_return_values = push_stmt_tuple(T, d, st, err);
+			if (num_return_values >= 0)
+				return num_return_values;
+			status = mysql_stmt_fetch_start(&err, my_stmt);
+			continue;
+		}
+		if (err == MYSQL_NO_DATA) {
+			return 1;
+		}
+		/* err == 1, error occured. */
+		lua_settop(T, 0);
+		return err_connection(T, d->conn);
+	}
+}
+
+static void
+stmt_run_cb(EV_P_ struct ev_io *w, int revents)
+{
+	struct db *d = (struct db *)w;
+	lua_State *T = d->w.data;
+	int status;
+	int err = 0;
+	struct stmt *st;
+	MYSQL_STMT *my_stmt;
+        int step = d->step;
+	int num_results;
+
+	luaL_checktype(T, 1, LUA_TUSERDATA);
+	st = lua_touserdata(T, 1);
+	my_stmt = st->my_stmt;
+
+	ev_io_stop(EV_A_ &d->w);
+	if (step == 0)
+		status = mysql_stmt_execute_cont(&err, my_stmt, mysql_status(revents));
+	else
+		status = mysql_stmt_fetch_cont(&err, my_stmt, mysql_status(revents));
+	num_results = stmt_run_next_step(status, err, T, d, st);
+	if (num_results < 0)
+		return;
+	d->w.data = NULL;
+	d->step = -1;
+	lem_queue(T, num_results);
+}
+
+static int
+stmt_run(lua_State *T)
+{
+	struct stmt *st;
+	struct db *d;
+	int err;
+	MYSQL *conn;
+	MYSQL_STMT *my_stmt;
+	int status;
+	int n;
+	int num_results;
+
+	luaL_checktype(T, 1, LUA_TUSERDATA);
+	st = lua_touserdata(T, 1);
+	d = st->d;
+	conn = d->conn;
+	my_stmt = st->my_stmt;
+	if (conn == NULL)
+		return err_closed(T);
+	if (d->w.data != NULL)
+		return err_busy(T);
+
+	n = lua_gettop(T) - 1;
+	if (prepare_params(T, st, n)) {
+		lua_settop(T, 0);
+		return err_connection(T, conn);
+	}
+	status = mysql_stmt_execute_start(&err, my_stmt);
+	st->row_idx = 0;
+	d->step = 0;
+	d->w.data = T;
+	ev_set_cb(&d->w, stmt_run_cb);
+	num_results = stmt_run_next_step(status, err, T, d, st);
+	if (num_results < 0)
+		return lua_yield(T, lua_gettop(T));
+	d->step = -1;
+	d->w.data = NULL;
+	return num_results;
+}
+
 int
 luaopen_lem_mariadb(lua_State *L)
 {
-	lua_newtable(L);
+	lua_createtable(L, 0, 2);
 
 	/* create Connection metatable mt */
-	lua_newtable(L);
+	lua_createtable(L, 0, 5);
 	lua_pushvalue(L, -1);
 	lua_setfield(L, -2, "__index");
 	/* mt.__gc = <db_gc> */
@@ -575,15 +899,12 @@ luaopen_lem_mariadb(lua_State *L)
 	/* mt.close = <db_close> */
 	lua_pushcfunction(L, db_close);
 	lua_setfield(L, -2, "close");
-	/* mt.exec = <db_exec> */
-	lua_pushcfunction(L, db_exec);
-	lua_setfield(L, -2, "exec");
 	/* mt.prepare = <db_prepare> */
 	lua_pushcfunction(L, db_prepare);
 	lua_setfield(L, -2, "prepare");
-	/* mt.run = <db_run> */
-	lua_pushcfunction(L, db_run);
-	lua_setfield(L, -2, "run");
+	/* mt.exec = <db_exec> */
+	lua_pushcfunction(L, db_exec);
+	lua_setfield(L, -2, "exec");
 
 	/* connect = <mariadb_connect> */
 	lua_pushvalue(L, -1); /* upvalue 1: Connection */
@@ -592,6 +913,28 @@ luaopen_lem_mariadb(lua_State *L)
 
 	/* set Connection */
 	lua_setfield(L, -2, "Connection");
+
+	/* Create prepared statement metatable stmt */
+	lua_createtable(L, 0, 4);
+	lua_pushvalue(L, -1);
+	lua_setfield(L, -2, "__index");
+	/* stmt.__gc = <stmt_gc> */
+	lua_pushcfunction(L, stmt_gc);
+	lua_setfield(L, -2, "__gc");
+	/* stmt.close = <stmt_close> */
+	lua_pushcfunction(L, stmt_close);
+	lua_setfield(L, -2, "close");
+	/* stmt.run = <stmt_run> */
+	lua_pushcfunction(L, stmt_run);
+	lua_setfield(L, -2, "run");
+
+	/* prepare = <db_prepare> */
+	lua_pushvalue(L, -1); /* upvalue 1: PrepStmt */
+	lua_pushcclosure(L, db_prepare, 1);
+	lua_setfield(L, -3, "prepare");
+
+	/* set PrepStmt */
+	lua_setfield(L, -2, "PrepStmt");
 
 	return 1;
 }

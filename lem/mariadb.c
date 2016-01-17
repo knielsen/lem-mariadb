@@ -402,6 +402,47 @@ db_prepare(lua_State *T)
 	return lua_yield(T, 3);
 }
 
+/*
+  Perform the next step in db:exec()
+  This can be:
+   - mysql_real_query_cont()
+   - mysql_store_result_start()
+   - mysql_store_result_cont()
+
+  Returns -1 if there is still more to be done; else the number of return
+  values.
+*/
+static int
+db_exec_next_step(int status, int err, MYSQL_RES *res, lua_State *T, struct db *d)
+{
+	int step = d->step;
+	MYSQL *conn = d->conn;
+
+	for (;;) {
+		if (status) {
+			db_handle_polling(d, status);
+			ev_io_start(LEM_ &d->w);
+			return -1;
+		}
+		if (step == 0) {
+			if (err) {
+				lua_settop(T, 0);
+				return err_connection(T, d->conn);
+			} else {
+				status = mysql_store_result_start(&res, conn);
+				step = d->step = 1;
+				continue;
+			}
+		}
+		/* step == 1 */
+		if (res || !mysql_errno(conn)) {
+			return push_tuples(T, res);
+		}
+		lua_settop(T, 0);
+		return err_connection(T, conn);
+	}
+}
+
 static void
 db_exec_cb(EV_P_ struct ev_io *w, int revents)
 {
@@ -412,31 +453,19 @@ db_exec_cb(EV_P_ struct ev_io *w, int revents)
 	MYSQL_RES *res = NULL;
 	MYSQL *conn = d->conn;
         int step = d->step;
+	int num_results;
 
 	ev_io_stop(EV_A_ &d->w);
 	if (step == 0)
 		status = mysql_real_query_cont(&err, conn, mysql_status(revents));
 	else
 		status = mysql_store_result_cont(&res, conn, mysql_status(revents));
-	if (step == 0 && !status && !err) {
-		step = d->step = 1;
-		status = mysql_store_result_start(&res, conn);
-	}
-	if (status) {
-		db_handle_polling(d, status);
-		ev_io_start(EV_A_ &d->w);
+	num_results = db_exec_next_step(status, err, res, T, d);
+	if (num_results < 0)
 		return;
-	}
-
 	d->w.data = NULL;
 	d->step = -1;
-	if ((step == 0 && err) || (step == 1 && !res && mysql_errno(conn) != 0)) {
-		lua_settop(T, 0);
-		lem_queue(T, err_connection(T, conn));
-		return;
-	}
-
-	lem_queue(T, push_tuples(T, res));
+	lem_queue(T, num_results);
 }
 
 static int
@@ -446,8 +475,8 @@ db_exec(lua_State *T)
 	const char *query;
 	int err;
 	MYSQL *conn;
-	MYSQL_RES *res;
 	int status;
+	int num_results;
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	query = luaL_checkstring(T, 2);
@@ -460,29 +489,15 @@ db_exec(lua_State *T)
 		return err_busy(T);
 
 	status = mysql_real_query_start(&err, conn, query, strlen(query));
-	if (!status) {
-		if (err) {
-			lua_settop(T, 0);
-			return err_connection(T, conn);
-		}
-		status = mysql_store_result_start(&res, conn);
-		if (!status) {
-			if (!res && mysql_errno(conn) != 0) {
-				lua_settop(T, 0);
-				return err_connection(T, conn);
-			}
-			return push_tuples(T, res);
-		} else
-			d->step = 1;
-	} else
-		d->step = 0;
-
+	d->step = 0;
 	d->w.data = T;
 	ev_set_cb(&d->w, db_exec_cb);
-	db_handle_polling(d, status);
-	ev_io_start(LEM_ &d->w);
-	lua_settop(T, 1);
-	return lua_yield(T, 1);
+	num_results = db_exec_next_step(status, err, NULL, T, d);
+	if (num_results < 0)
+		return lua_yield(T, lua_gettop(T));
+	d->step = -1;
+	d->w.data = NULL;
+	return num_results;
 }
 
 static int
@@ -586,7 +601,7 @@ push_stmt_tuple(lua_State *T, struct db *d, struct stmt *st, int err)
 }
 
 /*
-  Perform the next step in stmt:exec().
+  Perform the next step in stmt:run().
   This can be:
    - mysql_stmt_exec_cont(), if we are still executing the statement
    - mysql_stmt_fetch_start(), to start fetching the next row

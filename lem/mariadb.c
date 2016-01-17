@@ -34,7 +34,7 @@ struct bind_data {
 	unsigned long length;
 	my_bool is_null;
 	my_bool error;
-	char buffer[4 /* ToDo: 4096 */];
+	char buffer[4096];
 };
 
 struct stmt {
@@ -257,143 +257,6 @@ push_tuples(lua_State *T, MYSQL_RES *res)
 	return 1;
 }
 
-#ifdef ToDo
-static void
-db_error_cb(EV_P_ struct ev_io *w, int revents)
-{
-	struct db *d = (struct db *)w;
-	lua_State *T = d->w.data;
-
-	(void)revents;
-
-	if (PQconsumeInput(d->conn) == 0) {
-		ev_io_stop(EV_A_ &d->w);
-		lua_settop(T, 0);
-		lem_queue(T, err_connection(T, d->conn));
-		d->w.data = NULL;
-		return;
-	}
-
-	while (!PQisBusy(d->conn)) {
-		PGresult *res = PQgetResult(d->conn);
-
-		if (res == NULL) {
-			ev_io_stop(EV_A_ &d->w);
-			lem_queue(T, 2);
-			d->w.data = NULL;
-			return;
-		}
-
-		PQclear(res);
-	}
-}
-#endif
-
-#ifdef ToDo
-static void
-db_exec_cb(EV_P_ struct ev_io *w, int revents)
-{
-	struct db *d = (struct db *)w;
-	lua_State *T = d->w.data;
-	PGresult *res;
-
-	(void)revents;
-
-	if (PQconsumeInput(d->conn) != 1) {
-		ev_io_stop(EV_A_ &d->w);
-		lua_settop(T, 0);
-		lem_queue(T, err_connection(T, d->conn));
-		d->w.data = NULL;
-		return;
-	}
-
-	while (!PQisBusy(d->conn)) {
-		res = PQgetResult(d->conn);
-
-		if (res == NULL) {
-			ev_io_stop(EV_A_ &d->w);
-			lem_debug("returning %d values", lua_gettop(T) - 1);
-			lem_queue(T, lua_gettop(T) - 1);
-			d->w.data = NULL;
-			return;
-		}
-
-		switch (PQresultStatus(res)) {
-		case PGRES_EMPTY_QUERY:
-			lem_debug("PGRES_EMPTY_QUERY");
-			lua_settop(T, 0);
-			lua_pushnil(T);
-			lua_pushliteral(T, "empty query");
-			goto error;
-
-		case PGRES_COMMAND_OK:
-			lem_debug("PGRES_COMMAND_OK");
-			lua_pushboolean(T, 1);
-			break;
-
-		case PGRES_TUPLES_OK:
-			lem_debug("PGRES_TUPLES_OK");
-			push_tuples(T, res);
-			break;
-
-		case PGRES_COPY_IN:
-			lem_debug("PGRES_COPY_IN");
-			(void)PQsetnonblocking(d->conn, 1);
-		case PGRES_COPY_OUT:
-			lem_debug("PGRES_COPY_OUT");
-			PQclear(res);
-			lua_pushboolean(T, 1);
-			lem_queue(T, lua_gettop(T) - 1);
-			d->w.data = NULL;
-			return;
-
-		case PGRES_BAD_RESPONSE:
-			lem_debug("PGRES_BAD_RESPONSE");
-			lua_settop(T, 0);
-			err_connection(T, d->conn);
-			goto error;
-
-		case PGRES_NONFATAL_ERROR:
-			lem_debug("PGRES_NONFATAL_ERROR");
-			break;
-
-		case PGRES_FATAL_ERROR:
-			lem_debug("PGRES_FATAL_ERROR");
-			lua_settop(T, 0);
-			err_connection(T, d->conn);
-			goto error;
-
-		default:
-			lem_debug("unknown result status");
-			lua_settop(T, 0);
-			lua_pushnil(T);
-			lua_pushliteral(T, "unknown result status");
-			goto error;
-		}
-
-		PQclear(res);
-	}
-
-	lem_debug("busy");
-	return;
-error:
-	PQclear(res);
-	d->w.cb = db_error_cb;
-	while (!PQisBusy(d->conn)) {
-		res = PQgetResult(d->conn);
-
-		if (res == NULL) {
-			ev_io_stop(EV_A_ &d->w);
-			lem_queue(T, 2);
-			d->w.data = NULL;
-			return;
-		}
-
-		PQclear(res);
-	}
-}
-#endif
-
 int
 prepare_params(lua_State *T, struct stmt *st, int n)
 {
@@ -426,52 +289,6 @@ prepare_params(lua_State *T, struct stmt *st, int n)
 		return 1;
 	return 0;
 }
-
-#ifdef ToDo
-static int
-db_exec(lua_State *T)
-{
-	struct db *d;
-	const char *command;
-	int n;
-
-	luaL_checktype(T, 1, LUA_TUSERDATA);
-	command = luaL_checkstring(T, 2);
-
-	d = lua_touserdata(T, 1);
-	if (d->conn == NULL)
-		return err_closed(T);
-	if (d->w.data != NULL)
-		return err_busy(T);
-
-	n = lua_gettop(T) - 2;
-	if (n > 0) {
-		const char **values = lem_xmalloc(n * sizeof(char *));
-		int *lengths = lem_xmalloc(n * sizeof(int));
-
-		prepare_params(T, n, values, lengths);
-
-		n = PQsendQueryParams(d->conn, command, n,
-		                      NULL, values, lengths, NULL, 0);
-		free(values);
-		free(lengths);
-	} else
-		n = PQsendQuery(d->conn, command);
-
-	if (n != 1) {
-		lem_debug("PQsendQuery failed");
-		return err_connection(T, d->conn);
-	}
-
-	d->w.data = T;
-	d->w.cb = db_exec_cb;
-	ev_io_set(&d->w, PQsocket(d->conn), EV_READ);
-	ev_io_start(LEM_ &d->w);
-
-	lua_settop(T, 1);
-	return lua_yield(T, 1);
-}
-#endif
 
 static int
 wrap_stmt(lua_State *T, struct stmt *st)
@@ -660,16 +477,8 @@ db_exec(lua_State *T)
 static int
 stmt_gc(lua_State *T)
 {
-	/* ToDo */
-	return 0;
-}
+	struct stmt *st = lua_touserdata(T, 1);
 
-static int
-stmt_close(lua_State *T)
-{
-	struct stmt *st;
-
-	/* ToDo */
 	if (st->result_metadata)
 		mysql_free_result(st->result_metadata);
 	if (st->my_stmt)
@@ -677,6 +486,7 @@ stmt_close(lua_State *T)
 	free(st->param_bind);
 	free(st->result_bind);
 	free(st->bind_data);
+
 	return 0;
 }
 
@@ -901,9 +711,6 @@ luaopen_lem_mariadb(lua_State *L)
 	/* stmt.__gc = <stmt_gc> */
 	lua_pushcfunction(L, stmt_gc);
 	lua_setfield(L, -2, "__gc");
-	/* stmt.close = <stmt_close> */
-	lua_pushcfunction(L, stmt_close);
-	lua_setfield(L, -2, "close");
 	/* stmt.run = <stmt_run> */
 	lua_pushcfunction(L, stmt_run);
 	lua_setfield(L, -2, "run");

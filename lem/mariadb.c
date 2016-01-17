@@ -214,6 +214,7 @@ mariadb_connect(lua_State *T)
 	lem_debug("MARIA_POLLING_OK");
 	/* ToDo: Is this ev_io_init() needed? Maybe for later calls? */
 	ev_io_init(&d->w, NULL, mysql_get_socket(d->conn), 0);
+	d->w.data = NULL;
 	return 1;
 }
 
@@ -407,12 +408,16 @@ prepare_params(lua_State *T, struct stmt *st, int n)
 	for (i = 0; i < param_count; i++) {
 		size_t len;
 
-		if (i >= n || lua_isnil(T, i+3)) {
+		/*
+		  On the stack, we have the stmt handle followed by the
+		  parameters. So the first parameter is at index 2.
+		*/
+		if (i >= n || lua_isnil(T, i+2)) {
 			bind[i].buffer_type = MYSQL_TYPE_NULL;
 		} else {
 			bind[i].buffer_type = MYSQL_TYPE_STRING;
 			bind[i].is_null = NULL;
-			bind[i].buffer = (char *)lua_tolstring(T, i+3, &len);
+			bind[i].buffer = (char *)lua_tolstring(T, i+2, &len);
 			bind[i].buffer_length = len;
 			bind[i].length = &bind[i].buffer_length;
 		}
@@ -500,7 +505,7 @@ db_prepare_cb(EV_P_ struct ev_io *w, int revents)
 	MYSQL *conn = d->conn;
 	MYSQL_STMT *my_stmt;
 
-	st = lua_touserdata(T, 1);
+	st = lua_touserdata(T, 3);
 	my_stmt = st->my_stmt;
 
 	ev_io_stop(EV_A_ &d->w);
@@ -535,7 +540,6 @@ db_prepare(lua_State *T)
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	query = luaL_checkstring(T, 2);
 	d = lua_touserdata(T, 1);
-	lua_settop(T, 0); /* ToDo: don't we nuke the value of `query` here? */
 	conn = d->conn;
 	if (conn == NULL)
 		return err_closed(T);
@@ -566,7 +570,8 @@ db_prepare(lua_State *T)
 	ev_set_cb(&d->w, db_prepare_cb);
 	db_handle_polling(d, status);
 	ev_io_start(LEM_ &d->w);
-	return lua_yield(T, 1);
+	/* Yield with 3 items on the stack: db, query, stmt. */
+	return lua_yield(T, 3);
 }
 
 static void
@@ -705,16 +710,16 @@ bind_params(lua_State *T, struct db *d, struct stmt *st)
 		  tricky to ensure that the number will not over/underflow
 		  (32/64 bit platform, signed/unsigned, DECIMAL, ...).
 		*/
-		b[i].buffer_type = MYSQL_TYPE_STRING;
-		b[i].buffer = bind_data[i].buffer;
-		b[i].buffer_length = sizeof(bind_data[i].buffer);
-		b[i].is_null = &bind_data[i].is_null;
-		b[i].length = &bind_data[i].length;
-		b[i].error = &bind_data[i].error;
+		b->buffer_type = MYSQL_TYPE_STRING;
+		b->buffer = bind_data[i].buffer;
+		b->buffer_length = sizeof(bind_data[i].buffer);
+		b->is_null = &bind_data[i].is_null;
+		b->length = &bind_data[i].length;
+		b->error = &bind_data[i].error;
 	}
 	if (mysql_stmt_bind_result(st->my_stmt, binds))
 		return err_connection(T, d->conn);
-	return 0;
+	return -1;
 }
 
 static int
@@ -756,7 +761,7 @@ push_stmt_tuple(lua_State *T, struct db *d, struct stmt *st, int err)
 		lua_rawseti(T, -2, i+1);
 	}
 	lua_rawseti(T, -2, ++st->row_idx);
-	return 0;
+	return -1;
 }
 
 /*
@@ -889,31 +894,6 @@ luaopen_lem_mariadb(lua_State *L)
 {
 	lua_createtable(L, 0, 2);
 
-	/* create Connection metatable mt */
-	lua_createtable(L, 0, 5);
-	lua_pushvalue(L, -1);
-	lua_setfield(L, -2, "__index");
-	/* mt.__gc = <db_gc> */
-	lua_pushcfunction(L, db_gc);
-	lua_setfield(L, -2, "__gc");
-	/* mt.close = <db_close> */
-	lua_pushcfunction(L, db_close);
-	lua_setfield(L, -2, "close");
-	/* mt.prepare = <db_prepare> */
-	lua_pushcfunction(L, db_prepare);
-	lua_setfield(L, -2, "prepare");
-	/* mt.exec = <db_exec> */
-	lua_pushcfunction(L, db_exec);
-	lua_setfield(L, -2, "exec");
-
-	/* connect = <mariadb_connect> */
-	lua_pushvalue(L, -1); /* upvalue 1: Connection */
-	lua_pushcclosure(L, mariadb_connect, 1);
-	lua_setfield(L, -3, "connect");
-
-	/* set Connection */
-	lua_setfield(L, -2, "Connection");
-
 	/* Create prepared statement metatable stmt */
 	lua_createtable(L, 0, 4);
 	lua_pushvalue(L, -1);
@@ -928,13 +908,34 @@ luaopen_lem_mariadb(lua_State *L)
 	lua_pushcfunction(L, stmt_run);
 	lua_setfield(L, -2, "run");
 
-	/* prepare = <db_prepare> */
-	lua_pushvalue(L, -1); /* upvalue 1: PrepStmt */
-	lua_pushcclosure(L, db_prepare, 1);
-	lua_setfield(L, -3, "prepare");
-
 	/* set PrepStmt */
 	lua_setfield(L, -2, "PrepStmt");
+
+	/* create Connection metatable mt */
+	lua_createtable(L, 0, 5);
+	lua_pushvalue(L, -1);
+	lua_setfield(L, -2, "__index");
+	/* mt.__gc = <db_gc> */
+	lua_pushcfunction(L, db_gc);
+	lua_setfield(L, -2, "__gc");
+	/* mt.close = <db_close> */
+	lua_pushcfunction(L, db_close);
+	lua_setfield(L, -2, "close");
+	/* mt.prepare = <db_prepare> */
+	lua_getfield(L, -2, "PrepStmt");  /* upvalue 1: PrepStmt */
+	lua_pushcclosure(L, db_prepare, 1);
+	lua_setfield(L, -2, "prepare");
+	/* mt.exec = <db_exec> */
+	lua_pushcfunction(L, db_exec);
+	lua_setfield(L, -2, "exec");
+
+	/* connect = <mariadb_connect> */
+	lua_pushvalue(L, -1); /* upvalue 1: Connection */
+	lua_pushcclosure(L, mariadb_connect, 1);
+	lua_setfield(L, -3, "connect");
+
+	/* set Connection */
+	lua_setfield(L, -2, "Connection");
 
 	return 1;
 }

@@ -83,11 +83,9 @@ err_busy(lua_State *T)
 static int
 err_connection(lua_State *T, MYSQL *conn)
 {
-	const char *msg = mysql_error(conn);
-
 	lua_pushnil(T);
-        lua_pushlstring(T, msg, strlen(msg));
-        lua_pushinteger(T, mysql_errno(conn));
+	lua_pushstring(T, mysql_error(conn));
+	lua_pushinteger(T, mysql_errno(conn));
 	return 3;
 }
 

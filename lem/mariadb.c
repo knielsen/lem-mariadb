@@ -689,22 +689,16 @@ stmt_run_cb(EV_P_ struct ev_io *w, int revents)
 {
 	struct db *d = (struct db *)w;
 	lua_State *T = d->w.data;
-	int status;
+	struct stmt *st = lua_touserdata(T, 1);
 	int err = 0;
-	struct stmt *st;
-	MYSQL_STMT *my_stmt;
-        int step = d->step;
+	int status;
 	int num_results;
 
-	luaL_checktype(T, 1, LUA_TUSERDATA);
-	st = lua_touserdata(T, 1);
-	my_stmt = st->my_stmt;
-
 	ev_io_stop(EV_A_ &d->w);
-	if (step == 0)
-		status = mysql_stmt_execute_cont(&err, my_stmt, mysql_status(revents));
+	if (d->step == 0)
+		status = mysql_stmt_execute_cont(&err, st->my_stmt, mysql_status(revents));
 	else
-		status = mysql_stmt_fetch_cont(&err, my_stmt, mysql_status(revents));
+		status = mysql_stmt_fetch_cont(&err, st->my_stmt, mysql_status(revents));
 	num_results = stmt_run_next_step(status, err, T, d, st);
 	if (num_results < 0)
 		return;

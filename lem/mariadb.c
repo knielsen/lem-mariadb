@@ -210,15 +210,13 @@ mariadb_connect(lua_State *T)
 	struct box *box;
 	struct db *d;
 	int status;
-	int num_args;
 
-	num_args = lua_gettop(T);
-	o_host = num_args < 1 || lua_isnil(T, 1) ? NULL : luaL_checkstring(T, 1);
-	o_user = num_args < 2 || lua_isnil(T, 2) ? NULL : luaL_checkstring(T, 2);
-	o_passwd = num_args < 3 || lua_isnil(T, 3) ? NULL : luaL_checkstring(T, 3);
-	o_db = num_args < 4 || lua_isnil(T, 4) ? NULL : luaL_checkstring(T, 4);
-	o_port = num_args < 5 || lua_isnil(T, 5) ? 0 : luaL_checkinteger(T, 5);
-	o_socket = num_args < 6 || lua_isnil(T, 6) ? NULL : luaL_checkstring(T, 6);
+	o_host   = luaL_optstring(T, 1, NULL);
+	o_user   = luaL_optstring(T, 2, NULL);
+	o_passwd = luaL_optstring(T, 3, NULL);
+	o_db     = luaL_optstring(T, 4, NULL);
+	o_port   = luaL_optinteger(T, 5, 0);
+	o_socket = luaL_optstring(T, 6, NULL);
 
 	box = lua_newuserdata(T, sizeof(struct box));
 	d = box->db = lem_xmalloc(sizeof(struct db));

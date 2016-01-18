@@ -38,11 +38,12 @@ Import the module using something like
 
 This sets `db` to a table with a single function.
 
-* __db.connect(host, user, password, schema, port, socjet)__
+* __db.connect{host=HOST, user=USER, passwd=PASSWORD, db=SCHEMA, port=PORT, socket=SOCKET_PATH)__
 
-  Connect to the database using the given parameters. Returns a new
-  database connection object on success, or otherwise `nil` followed
-  by an error message (string) and error code (integer).
+  Connect to the database using the given parameters. If any parameter
+  is omitted, a default is used. Returns a new database connection
+  object on success, or otherwise `nil` followed by an error message
+  (string) and error code (integer).
 
 The metatable of database connection objects can be found under
 __db.Connection__. Prepared statements metatable (see below) is under

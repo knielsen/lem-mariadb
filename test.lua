@@ -64,11 +64,11 @@ end
 local mariadb = require 'lem.mariadb'
 
 local user,pass,sock = 'user', 'pass', '/var/run/mysqld/mysqld.sock'
-local db = assert(mariadb.connect(nil, user, pass, 'test', nil, sock))
+local db = assert(mariadb.connect{user=user, passwd=pass, db='test', socket=sock})
 -- A prepared statement whose db object can be garbage-collected.
 local s_gc = assert(db:prepare("SELECT * FROM (SELECT 1 a, 'a' b UNION ALL SELECT 2 a, 'c' b UNION ALL SELECT 4 a, 'hulubulu' b) tmp ORDER BY a DESC"))
-db = assert(mariadb.connect('localhost', user, pass, 'test', nil, sock))
-local db = assert(mariadb.connect('127.0.0.1', user, pass, 'test', 3306))
+db = assert(mariadb.connect{host='localhost', user=user, passwd=pass, db='test', socket=sock})
+local db = assert(mariadb.connect{host='127.0.0.1', user=user, passwd=pass, db='test', port=3306})
 
 assert(true == db:exec(
 'DROP TABLE IF EXISTS mytable'))

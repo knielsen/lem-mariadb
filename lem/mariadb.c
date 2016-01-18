@@ -167,6 +167,38 @@ db_handle_polling(struct db *d, int status)
 	ev_io_set(&d->w, mysql_get_socket(d->conn), flags);
 }
 
+#define STRING_WITH_LEN(str) (str), (sizeof(str)-1)
+
+static const char *
+table_optstring(lua_State *T, int idx, const char *name, size_t namelen, const char *def)
+{
+	const char *opt;
+	int idx2 = (idx < 0 ? idx-1 : idx);
+	lua_pushlstring(T, name, namelen);
+	lua_gettable(T, idx2);
+	if (lua_isnil(T, -1))
+		opt = def;
+	else
+		opt = luaL_checkstring(T, -1);
+	lua_pop(T, 1);
+	return opt;
+}
+
+static lua_Integer
+table_optinteger(lua_State *T, int idx, const char *name, size_t namelen, lua_Integer def)
+{
+	lua_Integer opt;
+	int idx2 = (idx < 0 ? idx-1 : idx);
+	lua_pushlstring(T, name, namelen);
+	lua_gettable(T, idx2);
+	if (lua_isnil(T, -1))
+		opt = def;
+	else
+		opt = luaL_checkinteger(T, -1);
+	lua_pop(T, 1);
+	return opt;
+}
+
 static void
 mariadb_connect_cb(EV_P_ struct ev_io *w, int revents)
 {
@@ -211,12 +243,13 @@ mariadb_connect(lua_State *T)
 	struct db *d;
 	int status;
 
-	o_host   = luaL_optstring(T, 1, NULL);
-	o_user   = luaL_optstring(T, 2, NULL);
-	o_passwd = luaL_optstring(T, 3, NULL);
-	o_db     = luaL_optstring(T, 4, NULL);
-	o_port   = luaL_optinteger(T, 5, 0);
-	o_socket = luaL_optstring(T, 6, NULL);
+	luaL_checktype(T, 1, LUA_TTABLE);
+	o_host   = table_optstring(T, 1, STRING_WITH_LEN("host"), NULL);
+	o_user   = table_optstring(T, 1, STRING_WITH_LEN("user"), NULL);
+	o_passwd = table_optstring(T, 1, STRING_WITH_LEN("passwd"), NULL);
+	o_db     = table_optstring(T, 1, STRING_WITH_LEN("db"), NULL);
+	o_port   = table_optinteger(T, 1, STRING_WITH_LEN("port"), 0);
+	o_socket = table_optstring(T, 1, STRING_WITH_LEN("socket"), NULL);
 
 	box = lua_newuserdata(T, sizeof(struct box));
 	d = box->db = lem_xmalloc(sizeof(struct db));

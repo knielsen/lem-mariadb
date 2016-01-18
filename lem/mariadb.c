@@ -261,7 +261,7 @@ push_tuples(lua_State *T, MYSQL_RES *res)
 	lua_settop(T, 0);
 	if (!res) {
 		/* Empty result set (like UPDATE/DELETE/INSERT, or DDL). */
-		lua_createtable(T, 0, 0);
+		lua_pushboolean(T, 1);
 		return 1;
 	}
 

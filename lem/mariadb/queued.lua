@@ -4,7 +4,7 @@
 -- Copyright 2016 Kristian Nielsen
 
 local utils    = require 'lem.utils'
-local postgres = require 'lem.mariadb'
+local mariadb  = require 'lem.mariadb'
 
 local remove = table.remove
 local thisthread, suspend, resume = utils.thisthread, utils.suspend, utils.resume

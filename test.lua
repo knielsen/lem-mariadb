@@ -21,7 +21,7 @@
 package.path = '?.lua;'..package.path
 package.cpath = '?.so;'..package.cpath
 
-print("Entering " .. arg[0])
+print("==Entering " .. arg[0])
 
 local prettyprint
 do
@@ -64,7 +64,9 @@ end
 local mariadb = require 'lem.mariadb'
 
 local db = assert(mariadb.connect(nil, 'user', 'pass', 'test', nil, '/var/run/mysqld/mysqld.sock'))
-local db = assert(mariadb.connect('localhost', 'user', 'pass', 'test', nil, '/var/run/mysqld/mysqld.sock'))
+-- A prepared statement whose db object can be garbage-collected.
+local s_gc = assert(db:prepare("SELECT * FROM (SELECT 1 a, 'a' b UNION ALL SELECT 2 a, 'c' b UNION ALL SELECT 4 a, 'hulubulu' b) tmp ORDER BY a DESC"))
+db = assert(mariadb.connect('localhost', 'user', 'pass', 'test', nil, '/var/run/mysqld/mysqld.sock'))
 local db = assert(mariadb.connect('127.0.0.1', 'user', 'pass', 'test', 3306))
 
 assert(db:exec(
@@ -94,8 +96,12 @@ local s_select = assert(db:prepare('SELECT id, name, foo FROM mytable WHERE foo 
 local res2 = assert(s_select:run(32, 4, 9));
 prettyprint(res2)
 
+print("==Test a prepared statement after garbage-collecting its connection object")
+collectgarbage()
+prettyprint(assert(s_gc:run()))
+
 assert(db:exec('DROP TABLE mytable'))
 
-print("Exiting " .. arg[0])
+print("==Exiting " .. arg[0])
 
 -- vim: syntax=lua ts=2 sw=2 noet:

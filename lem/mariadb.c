@@ -27,8 +27,24 @@ struct db {
 	struct ev_io w;
 	MYSQL conn_obj;
 	MYSQL *conn;
+	unsigned long refs;
 	int step;
 };
+
+/*
+  The struct db is shared between connection objects and prepared statement
+  objects, using reference counting for lifetime management.
+  The connection object is just a boxing of the struct db, so that it can be
+  garbage-collected without losing the actual connection still in use by
+  prepared statements.
+*/
+struct box {
+	struct db *db;
+};
+static inline struct db *
+db_unbox(lua_State *T, int idx) {
+	return ((struct box *)lua_touserdata(T, idx))->db;
+}
 
 struct bind_data {
 	unsigned long length;
@@ -75,14 +91,23 @@ err_connection(lua_State *T, MYSQL *conn)
 	return 3;
 }
 
+
+static void
+db_unref(struct db *d)
+{
+	if (--d->refs > 0)
+		return;
+	if (d->conn != NULL)
+		mysql_close(d->conn);
+	free(d);
+}
+
 static int
 db_gc(lua_State *T)
 {
-	struct db *d = lua_touserdata(T, 1);
+	struct db *d = db_unbox(T, 1);
 
-	if (d->conn != NULL)
-		mysql_close(d->conn);
-
+	db_unref(d);
 	return 0;
 }
 
@@ -93,7 +118,7 @@ db_close(lua_State *T)
 	lua_State *S;
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
-	d = lua_touserdata(T, 1);
+	d = db_unbox(T, 1);
 	if (d->conn == NULL)
 		return err_closed(T);
 
@@ -182,6 +207,7 @@ mariadb_connect(lua_State *T)
 	lua_Integer o_port;
 	const char *o_socket;
 	MYSQL *conn, *conn_res;
+	struct box *box;
 	struct db *d;
 	int status;
 	int num_args;
@@ -194,7 +220,9 @@ mariadb_connect(lua_State *T)
 	o_port = num_args < 5 || lua_isnil(T, 5) ? 0 : luaL_checkinteger(T, 5);
 	o_socket = num_args < 6 || lua_isnil(T, 6) ? NULL : luaL_checkstring(T, 6);
 
-	d = lua_newuserdata(T, sizeof(struct db));
+	box = lua_newuserdata(T, sizeof(struct box));
+	d = box->db = lem_xmalloc(sizeof(struct db));
+	d->refs = 1;
 	conn = d->conn = &d->conn_obj;
 	d->step = -1;
 	lua_pushvalue(T, lua_upvalueindex(1));
@@ -367,7 +395,7 @@ db_prepare(lua_State *T)
 
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	query = luaL_checkstring(T, 2);
-	d = lua_touserdata(T, 1);
+	d = db_unbox(T, 1);
 	conn = d->conn;
 	if (conn == NULL)
 		return err_closed(T);
@@ -381,6 +409,7 @@ db_prepare(lua_State *T)
 	/* Put the prepared statement object on top of the stack */
 	st = lua_newuserdata(T, sizeof(struct stmt));
 	st->d = d;
+	++d->refs;
 	st->my_stmt = my_stmt;
 	st->param_bind = st->result_bind = NULL;
 	st->bind_data = NULL;
@@ -481,7 +510,7 @@ db_exec(lua_State *T)
 	luaL_checktype(T, 1, LUA_TUSERDATA);
 	query = luaL_checkstring(T, 2);
 
-	d = lua_touserdata(T, 1);
+	d = db_unbox(T, 1);
 	conn = d->conn;
 	if (conn == NULL)
 		return err_closed(T);
@@ -512,6 +541,7 @@ stmt_gc(lua_State *T)
 	free(st->param_bind);
 	free(st->result_bind);
 	free(st->bind_data);
+	db_unref(st->d);
 
 	return 0;
 }

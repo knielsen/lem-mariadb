@@ -210,15 +210,13 @@ mariadb_connect(lua_State *T)
 	struct box *box;
 	struct db *d;
 	int status;
-	int num_args;
 
-	num_args = lua_gettop(T);
-	o_host = num_args < 1 || lua_isnil(T, 1) ? NULL : luaL_checkstring(T, 1);
-	o_user = num_args < 2 || lua_isnil(T, 2) ? NULL : luaL_checkstring(T, 2);
-	o_passwd = num_args < 3 || lua_isnil(T, 3) ? NULL : luaL_checkstring(T, 3);
-	o_db = num_args < 4 || lua_isnil(T, 4) ? NULL : luaL_checkstring(T, 4);
-	o_port = num_args < 5 || lua_isnil(T, 5) ? 0 : luaL_checkinteger(T, 5);
-	o_socket = num_args < 6 || lua_isnil(T, 6) ? NULL : luaL_checkstring(T, 6);
+	o_host   = luaL_optstring(T, 1, NULL);
+	o_user   = luaL_optstring(T, 2, NULL);
+	o_passwd = luaL_optstring(T, 3, NULL);
+	o_db     = luaL_optstring(T, 4, NULL);
+	o_port   = luaL_optinteger(T, 5, 0);
+	o_socket = luaL_optstring(T, 6, NULL);
 
 	box = lua_newuserdata(T, sizeof(struct box));
 	d = box->db = lem_xmalloc(sizeof(struct db));
@@ -263,7 +261,7 @@ push_tuples(lua_State *T, MYSQL_RES *res)
 	lua_settop(T, 0);
 	if (!res) {
 		/* Empty result set (like UPDATE/DELETE/INSERT, or DDL). */
-		lua_createtable(T, 0, 0);
+		lua_pushboolean(T, 1);
 		return 1;
 	}
 
@@ -691,22 +689,16 @@ stmt_run_cb(EV_P_ struct ev_io *w, int revents)
 {
 	struct db *d = (struct db *)w;
 	lua_State *T = d->w.data;
-	int status;
+	struct stmt *st = lua_touserdata(T, 1);
 	int err = 0;
-	struct stmt *st;
-	MYSQL_STMT *my_stmt;
-        int step = d->step;
+	int status;
 	int num_results;
 
-	luaL_checktype(T, 1, LUA_TUSERDATA);
-	st = lua_touserdata(T, 1);
-	my_stmt = st->my_stmt;
-
 	ev_io_stop(EV_A_ &d->w);
-	if (step == 0)
-		status = mysql_stmt_execute_cont(&err, my_stmt, mysql_status(revents));
+	if (d->step == 0)
+		status = mysql_stmt_execute_cont(&err, st->my_stmt, mysql_status(revents));
 	else
-		status = mysql_stmt_fetch_cont(&err, my_stmt, mysql_status(revents));
+		status = mysql_stmt_fetch_cont(&err, st->my_stmt, mysql_status(revents));
 	num_results = stmt_run_next_step(status, err, T, d, st);
 	if (num_results < 0)
 		return;

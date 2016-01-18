@@ -70,9 +70,9 @@ local s_gc = assert(db:prepare("SELECT * FROM (SELECT 1 a, 'a' b UNION ALL SELEC
 db = assert(mariadb.connect('localhost', user, pass, 'test', nil, sock))
 local db = assert(mariadb.connect('127.0.0.1', user, pass, 'test', 3306))
 
-assert(db:exec(
+assert(true == db:exec(
 'DROP TABLE IF EXISTS mytable'))
-assert(db:exec(
+assert(true == db:exec(
 'CREATE TABLE mytable (id INT PRIMARY KEY AUTO_INCREMENT, name TEXT, foo INT)'))
 
 assert(db:exec("INSERT INTO mytable (name, foo) VALUES ('alpha',1), ('beta',2), ('gamma',4), ('delta',8), ('epsilon',0)"))
@@ -90,8 +90,8 @@ local res = assert(s1:run('3'))
 prettyprint(res)
 
 local s_insert = assert(db:prepare('INSERT INTO mytable(name, foo) VALUES (?, ?)'))
-assert(s_insert:run('zeta', 32))
-assert(s_insert:run('eta', nil))
+assert(true == s_insert:run('zeta', 32))
+assert(true == s_insert:run('eta', nil))
 
 local s_select = assert(db:prepare('SELECT id, name, foo FROM mytable WHERE foo IN (?, ?, ?)'))
 local res2 = assert(s_select:run(32, 4, 9));

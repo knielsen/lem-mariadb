@@ -260,7 +260,7 @@ push_tuples(lua_State *T, MYSQL_RES *res)
 
 	lua_settop(T, 0);
 	if (!res) {
-		/* Empty result set (like UPDATE/DELETE/INSERT, or DDL). */
+		/* No result set (like UPDATE/DELETE/INSERT, or DDL). */
 		lua_pushboolean(T, 1);
 		return 1;
 	}
@@ -556,7 +556,11 @@ bind_params(lua_State *T, struct db *d, struct stmt *st)
 	res = st->result_metadata;
 	num_fields = st->num_fields;
 	if (num_fields == 0)
-		return 1;			/* No result set */
+        {
+		/* No result set (INSERT/UPDATE/DELETE/DDL ...) */
+		lua_pushboolean(T, 1);
+		return 1;
+	}
 
 	binds = st->result_bind;
 	bind_data = st->bind_data;
@@ -657,11 +661,11 @@ stmt_run_next_step(int status, int err, lua_State *T, struct db *d, struct stmt 
 				lua_settop(T, 0);
 				return err_connection(T, d->conn);
 			} else {
-				/* Allocate the result table */
-				lua_newtable(T);
 				num_return_values = bind_params(T, d, st);
 				if (num_return_values >= 0)
 					return num_return_values;
+				/* Allocate the result table */
+				lua_newtable(T);
 				status = mysql_stmt_fetch_start(&err, my_stmt);
 				step = d->step = 1;
 				continue;

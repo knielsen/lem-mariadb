@@ -62,7 +62,7 @@ Database connection objects has the following methods.
   Execute an SQL query, and return the result as a Lua table with
   entries 1, 2, ... for each rows. Each row is again a Lua table with
   entries 1, 2, ... for each returned column. If there is no result
-  set (eg. CREATE TABLE), an empty table is returned.
+  set (eg. CREATE TABLE), the value `true` is returned instead of a Lua table.
 
   This method does not support placeholders (see db:prepare() /
   stmt:run() for that).
@@ -94,7 +94,7 @@ Prepared statement objects have the following method:
   The result is returned as a Lua table with entries 1, 2, ... for
   each rows. Each row is again a Lua table with entries 1, 2, ... for
   each returned column. If there is no result set (eg. CREATE TABLE),
-  an empty table is returned.
+  the value `true` is returned instead of a Lua table.
 
   In case of error, nil is returned followed by an error message and
   error code.

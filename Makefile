@@ -1,7 +1,7 @@
 CC              = gcc -std=gnu99
 CFLAGS         ?= -O2 -pipe -Wall -Wextra -Wno-strict-aliasing -fno-strict-aliasing
 PKG_CONFIG      = pkg-config
-MARIADB_CONFIG  = mysql_config
+MARIADB_CONFIG  = mariadb_config
 STRIP           = strip
 INSTALL         = install
 UNAME           = uname

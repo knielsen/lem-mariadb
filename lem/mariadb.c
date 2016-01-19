@@ -21,7 +21,7 @@
 #include <string.h>
 #include <assert.h>
 #include <lem.h>
-#include <mysql/mysql.h>
+#include <mysql.h>
 
 struct db {
 	struct ev_io w;

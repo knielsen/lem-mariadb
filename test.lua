@@ -61,7 +61,8 @@ do
 	end
 end
 
-local mariadb = require 'lem.mariadb'
+--local mariadb = require 'lem.mariadb'
+local mariadb = require 'lem.mariadb.queued'
 
 local user,pass,sock = 'user', 'pass', '/var/run/mysqld/mysqld.sock'
 local db = assert(mariadb.connect{user=user, passwd=pass, db='test', socket=sock})

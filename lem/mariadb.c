@@ -281,7 +281,10 @@ mariadb_connect(lua_State *T)
 	lua_setmetatable(T, -2);
 
 	mysql_init(conn);
-	mysql_options(conn, MYSQL_OPT_NONBLOCK, 0);
+	if (mysql_options(conn, MYSQL_OPT_NONBLOCK, 0)) {
+	  d->conn = NULL;
+	  return err_connection(T, conn);
+	}
 	status = mysql_real_connect_start(&conn_res, conn, o_host, o_user,
 					  o_passwd, o_db, o_port, o_socket, 0);
 	if (status) {

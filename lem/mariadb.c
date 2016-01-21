@@ -125,8 +125,8 @@ db_close(lua_State *T)
 		ev_io_stop(LEM_ &d->w);
 		lua_pushnil(S);
 		lua_pushliteral(S, "interrupted");
-		lem_queue(S, 2);
 		d->w.data = NULL;
+		lem_queue(S, 2);
 	}
 
 	mysql_close(d->conn);
@@ -238,15 +238,15 @@ mariadb_connect_cb(EV_P_ struct ev_io *w, int revents)
 	if (!conn_res) {
 		lem_debug("MARIA_POLLING_FAILED");
 		lua_settop(T, 0);
-		lem_queue(T, err_connection(T, d->conn));
 		d->w.data = NULL;
 		d->conn = NULL;
+		lem_queue(T, err_connection(T, d->conn));
 		return;
 	}
 
 	lem_debug("MARIA_POLLING_OK");
-	lem_queue(T, 1);
 	d->w.data = NULL;
+	lem_queue(T, 1);
 }
 
 static int

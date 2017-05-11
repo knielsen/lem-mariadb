@@ -109,9 +109,9 @@ License
 -------
 
 lem-mariadb is free software. It is distributed under the terms of the
-[GNU General Public License][gpl].
+[GNU Lesser General Public License][lgpl].
 
-[gpl]: http://www.fsf.org/licensing/licenses/gpl.html
+[lgpl]: http://www.gnu.org/licenses/lgpl.html
 
 
 Contact
